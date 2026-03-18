@@ -35,7 +35,6 @@ class GeneralPurposeAgentApplication(ChatCompletion):
         raise NotImplementedError()
 
     async def _create_tools(self) -> list[BaseTool]:
-        # TODO:
         # 1. Create list gf BaseTool
         # ---
         # At the beginning this list can be empty. We will add here tools after they will be implemented
@@ -46,7 +45,9 @@ class GeneralPurposeAgentApplication(ChatCompletion):
         # 5. Add PythonCodeInterpreterTool with DIAL_ENDPOINT, `http://localhost:8050/mcp` mcp_url, tool_name is
         #    `execute_code`, more detailed about tools see in repository https://github.com/khshanovskyi/mcp-python-code-interpreter
         # 6. Extend tools with MCP tools from `http://localhost:8051/mcp` (use method `_get_mcp_tools`)
-        return []
+        return [
+            FileContentExtractionTool(endpoint=DIAL_ENDPOINT)
+        ]
 
     async def chat_completion(self, request: Request, response: Response) -> None:
         # 1. If `self.tools` are absent then call `_create_tools` method and assign to the `self.tools`
@@ -60,11 +61,14 @@ class GeneralPurposeAgentApplication(ChatCompletion):
         #       - deployment_name=DEPLOYMENT_NAME
         #       - request=request
         #       - response=response
+        if not self.tools:
+            self.tools = await self._create_tools()
+
         with response.create_single_choice() as choice:
             agent = GeneralPurposeAgent(
                 endpoint=DIAL_ENDPOINT,
                 system_prompt=SYSTEM_PROMPT,
-                tools=[]
+                tools=self.tools
             )
             await agent.handle_request(
                 deployment_name=DEPLOYMENT_NAME,

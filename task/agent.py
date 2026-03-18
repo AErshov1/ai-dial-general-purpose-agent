@@ -100,7 +100,8 @@ class GeneralPurposeAgent:
                             if tool_call_delta.id:
                                 tool_call_index_map[tool_call_delta.index] = tool_call_delta
                             else:
-                                tool_call = tool_call_index_map.get(tool_call_delta.index)
+                                tool_call = tool_call_index_map.get(
+                                    tool_call_delta.index)
                                 if tool_call and tool_call_delta.function:
                                     argument_chunk = tool_call_delta.function.arguments or ''
                                     tool_call.function.arguments += argument_chunk
@@ -110,7 +111,8 @@ class GeneralPurposeAgent:
         assistant_message = Message(
             role=Role.ASSISTANT,
             content=content,
-            tool_calls=[ToolCall.validate(tool_call) for tool_call in tool_call_index_map.values()],
+            tool_calls=[ToolCall.validate(tool_call)
+                        for tool_call in tool_call_index_map.values()],
         )
 
         if assistant_message.tool_calls:
@@ -124,14 +126,13 @@ class GeneralPurposeAgent:
                 for tool_call in assistant_message.tool_calls
             ]
             tool_messages = await asyncio.gather(*tasks)
-            self._tools_state[TOOL_CALL_HISTORY_KEY].append(assistant_message.dict(exclude_none=True))
-            self._tools_state[TOOL_CALL_HISTORY_KEY].expend(tool_messages)
+            self._tools_state[TOOL_CALL_HISTORY_KEY].append(
+                assistant_message.dict(exclude_none=True))
+            self._tools_state[TOOL_CALL_HISTORY_KEY].extend(tool_messages)
             return await self.handle_request(deployment_name, choice, request, response)
 
         choice.set_state(self._tools_state)
         return assistant_message
-
-
 
     def _prepare_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         # 1. Unpack messages with `unpack_messages` method (it is implemented, just check the logic in this method)
@@ -141,7 +142,10 @@ class GeneralPurposeAgent:
         # 3. Print history: iterate through unpacked messages and print as json (json.dumps)
         # 4. Return unpacked messages
 
-        message_history = unpack_messages(messages, None)
+        message_history = unpack_messages(
+            messages,
+            self._tools_state[TOOL_CALL_HISTORY_KEY]
+        )
         system_message = {
             "role": Role.SYSTEM.value,
             "content": self.system_prompt
@@ -154,7 +158,6 @@ class GeneralPurposeAgent:
         return message_history
 
     async def _process_tool_call(self, tool_call: ToolCall, choice: Choice, api_key: str, conversation_id: str) -> dict[str, Any]:
-        # TODO:
         # 1. Get tool name from tool_call function name
         # 2. Open Stage with StageProcessor (it will be shown in DIAL Chat and Stage serves in our case for
         #    tool call results representation)
@@ -167,4 +170,24 @@ class GeneralPurposeAgent:
         # 5. Execute tool
         # 6. Close stage with StageProcessor
         # 7. Return tool message as dict and don't forget to exclude none
-        raise NotImplementedError()
+        tool_name = tool_call.function.name
+        stage = StageProcessor.open_stage(choice=choice, name=tool_name)
+        tool = self._tools_dict.get(tool_name)
+        if tool.show_in_stage:
+            stage.append_content("## Request arguments: \n")
+            stage.append_content(f"```json\n\r{json.dumps(json.loads(
+                tool_call.function.arguments), indent=2)}\n\r```\n\r")
+            stage.append_content("## Response: \n")
+
+        tool_response = await tool.execute(
+            ToolCallParams(
+                tool_call=tool_call,
+                stage=stage,
+                choice=choice,
+                api_key=api_key,
+                conversation_id=conversation_id
+            )
+        )
+
+        StageProcessor.close_stage_safely(stage)
+        return tool_response.dict(exclude_none=True)
