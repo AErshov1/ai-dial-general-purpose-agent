@@ -1,0 +1,5 @@
+.venv
+.vs
+.nvim
+__pycache__
+core/keys.json

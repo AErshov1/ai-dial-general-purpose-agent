@@ -7,6 +7,23 @@ from task.utils.constants import TOOL_CALL_HISTORY_KEY, CUSTOM_CONTENT
 
 
 def unpack_messages(messages: list[Message], state_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Unpack and flatten a list of Message objects into a list of dictionaries suitable for API consumption.
+
+    This function processes assistant and non-assistant messages differently:
+    - For assistant messages: extracts and unpacks tool call history from the custom state,
+      removes custom_content, and converts the message to a dictionary
+    - For other messages: extracts message content and appends any attachment URLs from custom content
+    - Appends any additional state history messages, excluding custom_content fields
+
+    Args:
+        messages: A list of Message objects to unpack
+        state_history: A list of historical state dictionaries to append to the result
+
+    Returns:
+        A flattened list of dictionaries containing all messages and history, with keys like
+        "role", "content", and "tool_call_id" (for tool messages)
+    """
     result: list[dict[str, Any]] = []
     for message in messages:
         if message.role == Role.ASSISTANT:
@@ -39,7 +56,8 @@ def unpack_messages(messages: list[Message], state_history: list[dict[str, Any]]
                     if attachment.url:
                         attachments_urls_content += f"{attachment.url}\n"
                     elif attachment.reference_url:
-                        attachments_urls_content += f"{attachment.reference_url}\n"
+                        attachments_urls_content += f"{
+                            attachment.reference_url}\n"
 
             content = message.content or ''
             if attachments_urls_content:
