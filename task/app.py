@@ -51,7 +51,8 @@ class GeneralPurposeAgentApplication(ChatCompletion):
             RagTool(endpoint=DIAL_ENDPOINT,
                     deployment_name=DEPLOYMENT_NAME,
                     document_cache=doc_cache
-                    )
+                    ),
+            ImageGenerationTool(endpoint=DIAL_ENDPOINT),
         ]
 
     async def chat_completion(self, request: Request, response: Response) -> None:
