@@ -31,50 +31,57 @@ class PythonCodeInterpreterTool(BaseTool):
         :param tool_name: it must be actual name of tool that executes code. It is 'execute_code'.
             https://github.com/khshanovskyi/mcp-python-code-interpreter/blob/main/interpreter/server.py#L303
         """
-        #TODO:
         # 1. Set dial_endpoint
         # 2. Set mcp_client
         # 3. Set _code_execute_tool: Optional[MCPToolModel] as None at start, then iterate through `mcp_tool_models` and
         #    if any of tool model has the same same as `tool_name` then set _code_execute_tool as tool model
         # 4. If `_code_execute_tool` is null then raise error (We cannot set up PythonCodeInterpreterTool without tool that executes code)
-        raise NotImplementedError()
+        self.mcp_client = mcp_client
+        self.endpoint = dial_endpoint
+        self._code_execute_tool: Optional[MCPToolModel] = None
+        for tool_model in mcp_tool_models:
+            if tool_model.name == tool_name:
+                self._code_execute_tool = tool_model
+                break
+
+        if self._code_execute_tool is None:
+            raise ValueError(f"Tool with name {
+                             tool_name} not found in provided mcp_tool_models")
 
     @classmethod
     async def create(
             cls,
-            mcp_url: str,
+            mcp_client: MCPClient,
             tool_name: str,
             dial_endpoint: str,
     ) -> 'PythonCodeInterpreterTool':
         """Async factory method to create PythonCodeInterpreterTool"""
-        #TODO:
-        # 1. Create MCPClient
-        # 2. Get tools
-        # 3. Create PythonCodeInterpreterTool instance and return it
-        raise NotImplementedError()
+        await mcp_client.connect()
+        tools = await mcp_client.get_tools()
+        return cls(
+            mcp_client=mcp_client,
+            mcp_tool_models=tools,
+            tool_name=tool_name,
+            dial_endpoint=dial_endpoint,
+        )
 
     @property
     def show_in_stage(self) -> bool:
-        # TODO: set as False since we will have custom variant of representation in Stage
-        raise NotImplementedError()
+        return False
 
     @property
     def name(self) -> str:
-        # TODO: provide `_code_execute_tool` name
-        raise NotImplementedError()
+        return self._code_execute_tool.name
 
     @property
     def description(self) -> str:
-        # TODO: provide `_code_execute_tool` description
-        raise NotImplementedError()
+        return self._code_execute_tool.description
 
     @property
     def parameters(self) -> dict[str, Any]:
-        # TODO: provide `_code_execute_tool` parameters
-        raise NotImplementedError()
+        return self._code_execute_tool.parameters
 
     async def _execute(self, tool_call_params: ToolCallParams) -> str | Message:
-        #TODO:
         # 1. Load arguments with `json`
         # 2. Get `code` from arguments
         # 3. Get `session_id` from arguments (it is optional parameter, use get method)
@@ -107,4 +114,66 @@ class PythonCodeInterpreterTool(BaseTool):
         #     to 1000 chars, it is needed to avoid high costs and context window overload
         # 13. Append to stage response f"```json\n\r{execution_result.model_dump_json(indent=2)}\n\r```\n\r"
         # 14. Return execution result as string (model_dump_json method)
-        raise NotImplementedError()
+        arguments = json.loads(tool_call_params.tool_call.function.arguments)
+        print(f"{'#'*80}\n TOOL CALL: {self.name}\n=> Arguments: {arguments}\n")
+        code = arguments["code"]
+        session_id = arguments.get("session_id")
+
+        stage = tool_call_params.stage
+        stage.append_content("## Request arguments: \n")
+        stage.append_content(f"```python\n\r{code}\n\r```\n\r")
+        if session_id:
+            stage.append_content(f"**session_id**: {session_id}\n\r")
+        else:
+            stage.append_content("New session will be created\n\r")
+        stage.append_content("## Response: \n")
+
+        content = await self.mcp_client.call_tool(self.name, arguments)
+        execution_result_json = json.loads(content)
+        execution_result = _ExecutionResult.model_validate(
+            execution_result_json)
+
+        if execution_result.files:
+            dial_client = Dial(
+                base_url=self.endpoint,
+                api_key=tool_call_params.api_key,
+            )
+            files_home = dial_client.my_appdata_home()
+
+            for file in execution_result.files:
+                name = file.name
+                mime_type = file.mime_type
+                resource = await self._mcp_client.get_resource(AnyUrl(file.uri))
+
+                if mime_type.startswith('text/') or mime_type in ['application/json', 'application/xml']:
+                    file_data = resource.encode('utf-8')
+                else:
+                    file_data = base64.b64decode(resource)
+
+                url = f"files/{(files_home / name).as_posix()}"
+                print("Python Interpretator =>", url)
+
+                dial_client.files.upload(url=url, file=file_data)
+
+                attachment = Attachment(
+                    url=StrictStr(url),
+                    type=StrictStr(mime_type),
+                    title=StrictStr(name)
+                )
+                stage.add_attachment(attachment)
+                tool_call_params.choice.add_attachment(attachment)
+
+            execution_result_json[
+                "instructions"] = "Generates files have been provided to user, DON'T include links to them in response!"
+
+        output_limit_chars = 250
+        if execution_result.output:
+            stricted_output = [output[:output_limit_chars]
+                               for output in execution_result.output]
+            execution_result.output = stricted_output
+
+        stage.append_content(
+            f"```json\n\r{execution_result.model_dump_json(indent=2)}\n\r```\n\r")
+        print(f"=> Result: {content}\n{'#'*80}")
+
+        return str(execution_result.model_dump_json())

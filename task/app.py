@@ -38,8 +38,13 @@ class GeneralPurposeAgentApplication(ChatCompletion):
         # 3. Get tools, iterate through them and add them to created list as MCPTool where the client will be created
         #    MCPClient and mcp_tool_model will be the tool itself (see what `mcp_client.get_tools` returns).
         # 4. Return created tool list
+        pyintr_client = MCPClient("http://localhost:8050/mcp")
+        pyintr_tool = await PythonCodeInterpreterTool.create(mcp_client=pyintr_client,
+                                                             tool_name="execute_code",
+                                                             dial_endpoint=DIAL_ENDPOINT
+                                                             )
         self.mcp_clients = [
-            MCPClient("http://localhost:8051/mcp")
+            MCPClient("http://localhost:8051/mcp"),
         ]
 
         async def _connect_and_get_tools(client: MCPClient) -> list[MCPTool]:
@@ -50,7 +55,7 @@ class GeneralPurposeAgentApplication(ChatCompletion):
         tasks = [_connect_and_get_tools(client) for client in self.mcp_clients]
         tools: list[list[MCPTool]] = await asyncio.gather(*tasks)
         # Merget tools
-        return [tool for sublist in tools for tool in sublist]
+        return [tool for sublist in tools for tool in sublist] + [pyintr_tool]
 
     async def _create_tools(self) -> list[BaseTool]:
         # 1. Create list gf BaseTool
