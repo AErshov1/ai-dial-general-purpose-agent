@@ -17,50 +17,77 @@ class MCPClient:
         self._streams_context = None
         self._session_context = None
 
-    @classmethod
-    async def create(cls, mcp_server_url: str) -> 'MCPClient':
-        """Async factory method to create and connect MCPClient"""
-        #TODO:
-        # 1. Create instance of MCPClient with `cls`
-        # 2. Connect to MCP server
-        # 3. return created instance
-        raise NotImplementedError()
-
     async def connect(self):
         """Connect to MCP server"""
-        #TODO:
         # 1. Check if session is present, if yes just return to finsh execution
         # 2. Call `streamablehttp_client` method with `server_url` and set as `self._streams_context`
         # 3. Enter `self._streams_context`, result set as `read_stream, write_stream, _`
         # 4. Create ClientSession with streams from above and set as `self._session_context`
         # 5. Enter `self._session_context` and set as self.session
         # 6. Initialize session and print its result to console
-        raise NotImplementedError()
+        if self.session:
+            return
 
+        print(f"Connecting to MCP server at {self.server_url}...")
+        self._streams_context = streamablehttp_client(self.server_url)
+        read_stream, write_stream, _ = await self._streams_context.__aenter__()
+        try:
+            self._session_context = ClientSession(read_stream, write_stream)
+            self.session = await self._session_context.__aenter__()
+            await self.session.initialize()
+        except Exception as e:
+            await self.close(None, None, None)
+            raise e
 
     async def get_tools(self) -> list[MCPToolModel]:
         """Get available tools from MCP server"""
-        #TODO: Get and return MCP tools as list of MCPToolModel
-        raise NotImplementedError()
+        if not self.session:
+            raise RuntimeError("MCP client not connected.")
+
+        tools = await self.session.list_tools()
+        return [
+            MCPToolModel(
+                name=tool.name,
+                description=tool.description,
+                parameters=tool.inputSchema,
+            )
+            for tool in tools.tools
+        ]
 
     async def call_tool(self, tool_name: str, tool_args: dict[str, Any]) -> Any:
         """Call a tool on the MCP server"""
-        #TODO: Make tool call and return its result. Do it in proper way (it returns array of content and you need to handle it properly)
-        raise NotImplementedError()
+        if not self.session:
+            raise RuntimeError("MCP client not connected.")
+
+        tool_result: CallToolResult = await self.session.call_tool(tool_name, tool_args)
+        if not tool_result.content:
+            return None
+
+        content = tool_result.content[0]
+        if not isinstance(content, TextContent):
+            raise NotImplementedError(
+                "Currently only TextContent is supported as tool result content.")
+
+        return content.text
 
     async def get_resource(self, uri: AnyUrl) -> str | bytes:
         """Get specific resource content"""
-        #TODO: Get and return resource. Resources can be returned as TextResourceContents and BlobResourceContents, you
-        #      need to return resource value (text or blob)
         raise NotImplementedError()
 
-    async def close(self):
+    async def close(self, exc_type, exc_val, exc_tb):
         """Close connection to MCP server"""
-        #TODO:
         # 1. Close `self._session_context`
         # 2. Close `self._streams_context`
         # 3. Set session, _session_context and _streams_context as None
-        raise NotImplementedError()
+        print(f"Closing connection to MCP server at {self.server_url}...")
+        if self._session_context:
+            self._session_context.__aexit__(exc_type, exc_val, exc_tb)
+            self._session_context = None
+        if self._streams_context:
+            self._streams_context.__aexit__(exc_type, exc_val, exc_tb)
+            self._streams_context = None
+
+        self.session = None
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -69,6 +96,5 @@ class MCPClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        await self.close()
+        await self.close(exc_type, exc_val, exc_tb)
         return False
-

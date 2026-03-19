@@ -1,4 +1,5 @@
 import os
+import asyncio
 
 import uvicorn
 from aidial_sdk import DIALApp
@@ -24,15 +25,32 @@ class GeneralPurposeAgentApplication(ChatCompletion):
 
     def __init__(self):
         self.tools: list[BaseTool] = []
+        self.mcp_clients = []
 
-    async def _get_mcp_tools(self, url: str) -> list[BaseTool]:
-        # TODO:
+    def __del__(self):
+        if self.clients:
+            for client in self.clients:
+                asyncio.run(client.close())
+
+    async def _get_mcp_tools(self) -> list[BaseTool]:
         # 1. Create list of BaseTool
         # 2. Create MCPClient
         # 3. Get tools, iterate through them and add them to created list as MCPTool where the client will be created
         #    MCPClient and mcp_tool_model will be the tool itself (see what `mcp_client.get_tools` returns).
         # 4. Return created tool list
-        raise NotImplementedError()
+        self.mcp_clients = [
+            MCPClient("http://localhost:8051/mcp")
+        ]
+
+        async def _connect_and_get_tools(client: MCPClient) -> list[MCPTool]:
+            await client.connect()
+            tools = await client.get_tools()
+            return [MCPTool(client=client, mcp_tool_model=tool) for tool in tools]
+
+        tasks = [_connect_and_get_tools(client) for client in self.mcp_clients]
+        tools: list[list[MCPTool]] = await asyncio.gather(*tasks)
+        # Merget tools
+        return [tool for sublist in tools for tool in sublist]
 
     async def _create_tools(self) -> list[BaseTool]:
         # 1. Create list gf BaseTool
@@ -68,7 +86,12 @@ class GeneralPurposeAgentApplication(ChatCompletion):
         #       - request=request
         #       - response=response
         if not self.tools:
-            self.tools = await self._create_tools()
+            tasks = [self._create_tools(), self._get_mcp_tools()]
+            tools = await asyncio.gather(*tasks)
+            print(f"{tools}")
+            self.tools = tools[0] + tools[1]
+            names = [tool.name for tool in self.tools]
+            print(f"==> Tools: {names}")
 
         with response.create_single_choice() as choice:
             agent = GeneralPurposeAgent(
